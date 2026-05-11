@@ -13,52 +13,37 @@ class ForwardingGraph:
 def find_shortest_paths(source, target, graph):
     start = (0, source)
     open = [start]
-    closed = []
-    all_scores = {source: 0}
-    parents = {source: []}
+    closed = set()
+    dist = [1e7 ] * len(graph)
+    dist[source] = 0
+    parents = {source: set()}
 
     while open:
         score, current = heapq.heappop(open)
-        closed.append(current)
+        closed.add(current)
 
         #Find all shortest paths
         if current == target:
             continue
 
-        #Add all possible neighbours to open
+        #Add all possible neighbors to open
         for neighbour in graph[current]:
-            tentative_score = graph[current][neighbour].metric + score
-
-            if neighbour not in all_scores:
-                all_scores[neighbour] = 1e7
-
-            if tentative_score < all_scores[neighbour]:
-                all_scores[neighbour] = tentative_score
-                heapq.heappush(open, (tentative_score, neighbour))
-                parents[neighbour] = [current]
-            elif tentative_score == all_scores[neighbour]:
-                parents[neighbour].append(current)
-    return all_scores, parents
-
-"""def get_all_paths_from_parents(source, target, parents):
-    all_paths = []
-
-    def dfs(current: int, path: List[int]):
-        if current == source:
-            all_paths.append([source] + path[::-1])
-            return
-
-        for parent in parents.get(current, []):
-            dfs(parent, path + [current])
-
-    if target in parents or target == source:
-        dfs(target, [])
-
-    return all_paths"""
+            new_dist = graph[current][neighbour].metric + score
+            if new_dist < dist[neighbour]:
+                dist[neighbour] = new_dist
+                parents[neighbour] = set()
+                parents[neighbour].add(current)
+            elif new_dist == dist[neighbour]:
+                parents[neighbour].add(current)
+            if neighbour not in closed:
+                heapq.heappush(open, (dist[neighbour], neighbour))
+    return dist, parents
 
 def get_all_paths_from_parents(source, target, parents):
     """Reconstruct all shortest paths"""
     all_paths = []
+    nodes = set()
+    nodes.add(source)
 
     def dfs(current: int, path: List[int]):
         if current == source:
@@ -67,94 +52,66 @@ def get_all_paths_from_parents(source, target, parents):
 
         for parent in parents.get(current, []):
             dfs(parent, path + [current])
+            nodes.add(current)
 
     if target in parents or target == source:
         dfs(target, [])
 
-    return all_paths
+    return all_paths, nodes
 
-def ecmp_calculation(source, target, parents, fw_graph, volume, links):
-    current = source
+def ecmp_calculation(source, parents, nodes, volume):
+    #Define children
+    children = defaultdict(list)
+    indegree = defaultdict(int)
+    for child, parent_set in parents.items():
+        for parent in parent_set:
+            if child in nodes:
+                children[parent].append(child)
+                indegree[child] += 1
+
 
     node_flow = defaultdict(float)
+    node_flow[source] = volume
     edge_flow = defaultdict(float)
 
-    node_flow[source] = volume
     open = deque([source])
-    visited = set()
-    link_load = [0 for _ in range(len(links))]
 
     while open:
         current = open.popleft()
-        if current in visited:
+        next_nodes = children[current]
+        if not next_nodes:
             continue
-        visited.add(current)
-        print("we visit node", current)
 
-        outgoing = 0
-        next = []
-        for links in fw_graph.links:
-            if links.start == current:
-                outgoing += 1
-                next.append(links.end)
-        for node in next:
-            link_id = get_link_id(current, node)
-            node_flow[node] += node_flow[current] / len(next)
-            link_load[link_id] += node_flow[node]
-            print("next is", node)
-            print("new node flow is:", node_flow[node])
-            print("new link load is:", link_load[link_id], "\n")
-            open.append(node)
-    print(link_load)
-    print("flow on every node:", node_flow)
+        split_flow  = node_flow[current] / len(next_nodes)
+        for next in next_nodes:
+            node_flow[next] += split_flow
+            edge_flow[(current, next)] += split_flow
 
+            indegree[next] -= 1
+            if indegree[next] == 0:
+                open.append(next)
 
-
-
-    for parent in parents[current]:
-        num_parents = len(parents[current])
-        link_id = get_link_id(parent, current)
-        link_load[link_id] = 1 / num_parents
-
-    print(link_load)
-    return None
+    return node_flow, edge_flow
 
 def find_forwarding_graph(source, target, graph, links):
     """Find forwarding graph containing all edges on any shortest path"""
     scores, parents = find_shortest_paths(source, target, graph)
-    paths = get_all_paths_from_parents(source, target, parents)
+    paths, nodes = get_all_paths_from_parents(source, target, parents)
 
-    # Build set of all edges that are on shortest paths
-    forwarding_edges = set()
-
-    # Iterate through parents dictionary to extract edges
-    for child, parent_list in parents.items():
-        for parent in parent_list:
-            for path in paths:
-                if child in path and parent in path:
-                    # Add link_id from parent to child
-                    link_id= get_link_id(parent, child)
-                    forwarding_edges.add(link_id)
-                    continue
-
-    #Add the actual links
+    """Extract the forwarding edges"""
     forwarding_links = []
-    for link_id in forwarding_edges:
-        link = links[link_id]
-        forwarding_links.append(link)
+    for child in parents:
+        for parent in parents[child]:
+            if child in nodes and parent in nodes:
+                link_id = get_link_id(parent,child)
+                forwarding_links.append(links[link_id])
 
     fw_graph = ForwardingGraph(
         source=source,
         target=target,
         links=forwarding_links
     )
-    return fw_graph, parents
-
-"""
-def find_forwarding_graph(source, target, graph, links):
-    scores, parents = find_shortest_paths(source, target, graph)
-    paths = get_all_paths_from_parents(source, target, parents)
-    return paths"""
+    return fw_graph, parents, nodes
 
 
 
