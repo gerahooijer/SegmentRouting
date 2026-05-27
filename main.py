@@ -22,6 +22,7 @@ if __name__ == '__main__':
     budget_t1 = budget_list[0]['value']
     graph_t1 = remove_downed_links(graph, interventions, 1)
 
+    """Random restarts"""
     best_waypoints = None
     best_mlu = float('inf')
     for restart in range(5):
@@ -62,7 +63,8 @@ if __name__ == '__main__':
 
     print("Running local search for timestep", timestep, "with budget", budget_t1)
     print("Links removed at t=1:", [intervention['links'] for intervention in interventions if intervention['t'] == 1])
-    """Timestep 1"""
+
+    """Timestep 1 starting from best t=0 solution"""
     waypoints = [list(w) for w in best_waypoints]
     edge_flows = dict(best_edge_flows)
 
