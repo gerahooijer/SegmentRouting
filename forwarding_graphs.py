@@ -113,6 +113,20 @@ def find_forwarding_graph(source, target, graph, links):
     )
     return fw_graph, parents, nodes
 
-
+def compute_edge_flow(s, t, w, volume, graph, links):
+    if w is None:
+        fw_graph, parents, nodes = find_forwarding_graph(s, t, graph, links)
+        node_flow, edge_flow = ecmp_calculation(s, parents, nodes, volume)
+    else:
+        fw_graph_1, parents_1, nodes_1 = find_forwarding_graph(s, w, graph, links)
+        node_flow_1, edge_flow_1 = ecmp_calculation(s, parents_1, nodes_1, volume)
+        fw_graph_2, parents_2, nodes_2 = find_forwarding_graph(w, t, graph, links)
+        node_flow_2, edge_flow_2 = ecmp_calculation(w, parents_2, nodes_2, volume)
+        edge_flow = defaultdict(float)
+        for edge, flow in edge_flow_1.items():
+            edge_flow[edge] += flow
+        for edge, flow in edge_flow_2.items():
+            edge_flow[edge] += flow
+    return edge_flow
 
 
