@@ -1,7 +1,6 @@
 from collections import defaultdict
-
 from read_input import read_input, generate_adjacency_lists, Link, get_link_id
-from forwarding_graphs import find_forwarding_graph, ecmp_calculation, compute_edge_flow
+from forwarding_graphs import compute_edge_flow
 import time
 import random
 from generate_output_file import output_file
@@ -28,6 +27,7 @@ if __name__ == '__main__':
             w = random.choice([n for n in range(num_nodes) if n != s and n != t])
             waypoints[demand_id][timestep] = w
             print("Trying waypoint", w, "for demand", demand_id, "at timestep", timestep)
+    
 
     """"Compute edge flows using current waypoints"""
     edge_flows = defaultdict()
@@ -57,8 +57,6 @@ if __name__ == '__main__':
         print("for time step", timestep, "link utilizations are:", link_utilization[timestep])
         print("the highest utilization is", max(link_utilization[timestep]), "\n")
 
-        print("max timestep 0:", max(link_utilization[0]))
-        print("max timestep 1:", max(link_utilization[1]))
         overutilised = [(i, link_utilization[timestep][i]) for i in range(len(links)) if link_utilization[timestep][i] > 1.0]
         if overutilised:
             print("overutilised links:", overutilised)
