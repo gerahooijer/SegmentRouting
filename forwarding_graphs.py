@@ -61,6 +61,7 @@ def ecmp_calculation(source, parents, nodes, volume):
 
 def get_all_forwarding_graphs(graph, links, num_nodes):
     edge_flows = {}
+    all_nodes_in_fg = {}
 
     for s in range(num_nodes ):
         scores, parents = find_shortest_paths(s, graph)
@@ -81,5 +82,5 @@ def get_all_forwarding_graphs(graph, links, num_nodes):
 
             node_flow, edge_flow = ecmp_calculation(s, parents, nodes_in_fg, volume = 1)
             edge_flows[(s, t)] = dict(edge_flow)
-
-    return edge_flows
+            all_nodes_in_fg[(s, t)] = [n for n in nodes_in_fg]
+    return edge_flows, all_nodes_in_fg

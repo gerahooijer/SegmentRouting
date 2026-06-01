@@ -4,10 +4,8 @@ def output_file(demands, time_slots, instance, waypoints):
     data = {"srpaths": []}
     for id, demand in enumerate(demands):
         for time in range(time_slots):
-            waypoint = []
-            if waypoints[id][time] != None:
-                w = waypoints[id][time]
-                waypoint.append(w)
+            num_waypoints = len(waypoints[id][time])
+            waypoint = waypoints[id][time][1:num_waypoints-1]
             output_data = {"d": id, "t": time, "w": waypoint}
             data["srpaths"].append(output_data)
 
