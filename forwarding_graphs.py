@@ -1,29 +1,17 @@
 import heapq
-from dataclasses import dataclass
-from typing import List, Tuple, Dict
-from read_input import _link_map, get_link_id
 from collections import defaultdict, deque
 
-@dataclass
-class ForwardingGraph:
-    source: int
-    target: int
-    links: List[Tuple[int, float]]
-
-def find_shortest_paths(source, target, graph):
+def find_shortest_paths(source, graph):
     start = (0, source)
     open = [start]
-    closed = set()
     dist = [1e7 ] * len(graph)
     dist[source] = 0
     parents = {source: set()}
 
     while open:
         score, current = heapq.heappop(open)
-        closed.add(current)
 
-        #Find all shortest paths
-        if current == target:
+        if score > dist[current]:
             continue
 
         #Add all possible neighbors to open
@@ -33,48 +21,26 @@ def find_shortest_paths(source, target, graph):
                 dist[neighbour] = new_dist
                 parents[neighbour] = set()
                 parents[neighbour].add(current)
+                heapq.heappush(open, (dist[neighbour], neighbour))
             elif new_dist == dist[neighbour]:
                 parents[neighbour].add(current)
-            if neighbour not in closed:
-                heapq.heappush(open, (dist[neighbour], neighbour))
+
     return dist, parents
 
-def get_all_paths_from_parents(source, target, parents):
-    """Reconstruct all shortest paths"""
-    all_paths = []
-    nodes = set()
-    nodes.add(source)
-
-    def dfs(current: int, path: List[int]):
-        if current == source:
-            all_paths.append([source] + path[::-1])
-            return
-
-        for parent in parents.get(current, []):
-            dfs(parent, path + [current])
-            nodes.add(current)
-
-    if target in parents or target == source:
-        dfs(target, [])
-
-    return all_paths, nodes
-
 def ecmp_calculation(source, parents, nodes, volume):
-    #Define children
-    children = defaultdict(list)
-    indegree = defaultdict(int)
-    for child, parent_set in parents.items():
-        for parent in parent_set:
-            if child in nodes:
-                children[parent].append(child)
-                indegree[child] += 1
-
 
     node_flow = defaultdict(float)
     node_flow[source] = volume
     edge_flow = defaultdict(float)
 
     open = deque([source])
+    indegree = defaultdict(int)
+    children = defaultdict(list)
+    for child, parent_set in parents.items():
+        for parent in parent_set:
+            if child in nodes:
+                children[parent].append(child)
+                indegree[child] += 1
 
     while open:
         current = open.popleft()
@@ -93,40 +59,27 @@ def ecmp_calculation(source, parents, nodes, volume):
 
     return node_flow, edge_flow
 
-def find_forwarding_graph(source, target, graph, links):
-    """Find forwarding graph containing all edges on any shortest path"""
-    scores, parents = find_shortest_paths(source, target, graph)
-    paths, nodes = get_all_paths_from_parents(source, target, parents)
+def get_all_forwarding_graphs(graph, links, num_nodes):
+    edge_flows = {}
 
-    """Extract the forwarding edges"""
-    forwarding_links = []
-    for child in parents:
-        for parent in parents[child]:
-            if child in nodes and parent in nodes:
-                link_id = get_link_id(parent,child)
-                forwarding_links.append(links[link_id])
+    for s in range(num_nodes ):
+        scores, parents = find_shortest_paths(s, graph)
 
-    fw_graph = ForwardingGraph(
-        source=source,
-        target=target,
-        links=forwarding_links
-    )
-    return fw_graph, parents, nodes
+        for t in range(num_nodes):
+            if s == t:
+                continue
 
-def compute_edge_flow(s, t, w, volume, graph, links):
-    if w is None:
-        fw_graph, parents, nodes = find_forwarding_graph(s, t, graph, links)
-        node_flow, edge_flow = ecmp_calculation(s, parents, nodes, volume)
-    else:
-        fw_graph_1, parents_1, nodes_1 = find_forwarding_graph(s, w, graph, links)
-        node_flow_1, edge_flow_1 = ecmp_calculation(s, parents_1, nodes_1, volume)
-        fw_graph_2, parents_2, nodes_2 = find_forwarding_graph(w, t, graph, links)
-        node_flow_2, edge_flow_2 = ecmp_calculation(w, parents_2, nodes_2, volume)
-        edge_flow = defaultdict(float)
-        for edge, flow in edge_flow_1.items():
-            edge_flow[edge] += flow
-        for edge, flow in edge_flow_2.items():
-            edge_flow[edge] += flow
-    return edge_flow
+            nodes_in_fg = set()
+            stack = [t]
+            while stack:
+                u = stack.pop()
+                if u in nodes_in_fg:
+                    continue
+                nodes_in_fg.add(u)
+                for p in parents.get(u, []):
+                    stack.append(p)
 
+            node_flow, edge_flow = ecmp_calculation(s, parents, nodes_in_fg, volume = 1)
+            edge_flows[(s, t)] = dict(edge_flow)
 
+    return edge_flows

@@ -1,66 +1,96 @@
 from collections import defaultdict
 from read_input import get_link_id
-from forwarding_graphs import compute_edge_flow
 
-def compute_mlu_from_flows(edge_flows, links, num_time_slots):
-    best = 0
-    for timestep in range(num_time_slots):
-        link_util = defaultdict(float)
-        for (demand_id, ts), edge_flow in edge_flows.items():
-            if ts != timestep:
-                continue
-            for (u, v), flow in edge_flow.items():
-                link_id = get_link_id(u, v)
-                link_util[link_id] += flow / links[link_id].capacity
-        if link_util:
-            best = max(best, max(link_util.values()))
-    return best
+def calculate_flow(demand, waypoint, timestep, edge_flows, links, link_util):
+    volume = demand['v'][timestep]
 
-def compute_mlu_single_timestep(edge_flows, links, timestep):
-    link_util = defaultdict(float)
-    for (demand_id, ts), edge_flow in edge_flows.items():
-        if ts != timestep:
-            continue
-        for (u, v), flow in edge_flow.items():
+    if waypoint is None or waypoint == demand['s'] or waypoint == demand['t']:
+        flow = edge_flows[demand['s'], demand['t']]
+        for (u, v), percentage in flow.items():
             link_id = get_link_id(u, v)
-            link_util[link_id] += flow / links[link_id].capacity
-    return max(link_util.values()) if link_util else 0
+            link_util[link_id] += percentage * volume / links[link_id].capacity
+    else:
+        flow_1 = edge_flows[demand['s'], waypoint]
+        flow_2 = edge_flows[waypoint, demand['t']]
+        for (u, v), percentage in flow_1.items():
+            link_id = get_link_id(u, v)
+            link_util[link_id] += percentage * volume / links[link_id].capacity
+        for (u, v), percentage in flow_2.items():
+            link_id = get_link_id(u, v)
+            link_util[link_id] += percentage * volume / links[link_id].capacity
 
-def local_search_timestep(demands, waypoints, edge_flows, graph, links, num_nodes, num_time_slots, timestep, prev_waypoints=None, budget=None):
-    current_mlu = compute_mlu_single_timestep(edge_flows, links, timestep)
-    
+    return link_util
+
+def compute_mlu_from_percentages(edge_flows, demands, links, waypoints, timestep):
+    worst = 0
+    link_util = defaultdict(float)
+    for demand_id, demand in enumerate(demands):
+        w = waypoints[demand_id][timestep]
+        link_util= calculate_flow(demand, w, timestep, edge_flows, links, link_util)
+    if link_util:
+        worst = max(worst, max(link_util.values()))
+
+    return worst, link_util
+
+def update_mlu_percentages(edge_flows, demand, old_w, new_w, links, timestep, link_util):
+    old_flow = calculate_flow(demand, old_w, timestep, edge_flows, links, link_util= defaultdict(float))
+    new_flow = calculate_flow(demand, new_w, timestep, edge_flows, links, link_util= defaultdict(float))
+    update_util = link_util.copy()
+    for link_id in old_flow:
+        update_util[link_id] -= old_flow[link_id]
+    for link_id in new_flow:
+        update_util[link_id] += new_flow[link_id]
+    return max(update_util.values()), update_util
+
+def segment_path(s, t, waypoint):
+    if waypoint is None or waypoint == s or waypoint == t:
+        return [(s, t)]
+    return [(s, waypoint), (waypoint, t)]
+
+def calculate_changing_cost (s, t, old_w, new_w):
+    seg_1 = set(segment_path(s, t, old_w))
+    seg_2 = set(segment_path(s, t, new_w))
+    return len(seg_1.symmetric_difference(seg_2))
+
+def local_search_precomputed_fg(demands, waypoints, edge_flow_all, links, num_nodes,
+                                 current_mlu, link_util, timestep, prev_waypoints=None, budget=None):
+    curr_link_util = (link_util).copy()
+
+    #Run LS until no improvements found anymore
     improved = True
     while improved:
         improved = False
         for demand_id, demand in enumerate(demands):
             s = demand['s']
             t = demand['t']
+            start_w = waypoints[demand_id][timestep]
             current_w = waypoints[demand_id][timestep]
-            volume = demand['v'][timestep]
-            
-            candidates = [None] + [n for n in range(num_nodes) if n != s and n != t and n != current_w]
+            changing_cost = 0
+
+            candidates = [None] + [n for n in range(num_nodes) if n != current_w]
             for new_w in candidates:
-                
+                cost = 0
+                #If there is a budget, calculate the cost of changing the waypoints
                 if budget is not None and prev_waypoints is not None:
-                    if new_w != prev_waypoints[demand_id][timestep]:
-                        changes = sum(1 for d in range(len(demands)) 
-                                     if waypoints[d][timestep] != prev_waypoints[d][timestep])
-                        if changes >= budget:
-                            continue
-                
-                # only recompute flow for this one demand
-                new_flow = compute_edge_flow(s, t, new_w, volume, graph, links)
-                old_flow = edge_flows[(demand_id, timestep)]
-                edge_flows[(demand_id, timestep)] = new_flow
-                
-                new_mlu = compute_mlu_single_timestep(edge_flows, links, timestep)
-                
+                    # Calculate cost
+                    cost = calculate_changing_cost(s, t, current_w, new_w)
+                    if budget - cost < 0: #If it does not fit within the budget, skip
+                        continue
+
+                #Compute the mlu for the new waypoint
+                new_mlu, updated_link_util = update_mlu_percentages(edge_flow_all, demand, current_w,
+                                                new_w, links, timestep, curr_link_util)
+
                 if new_mlu < current_mlu:
                     current_mlu = new_mlu
                     current_w = new_w
                     waypoints[demand_id][timestep] = new_w
                     improved = True
-                else:
-                    edge_flows[(demand_id, timestep)] = old_flow
-    
-    return waypoints, edge_flows    
+                    curr_link_util = updated_link_util
+                    if budget:
+                        budget = budget + changing_cost - cost
+                        changing_cost = cost
+                        print("for demand", demand_id, "changed from", start_w, "to", current_w, "costs", changing_cost)
+                        print("\t new budget = ", budget)
+
+    return waypoints, curr_link_util, current_mlu

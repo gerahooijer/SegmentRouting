@@ -1,13 +1,15 @@
 import json
 
-def output_file(demands, time_slots, instance, segments = False):
+def output_file(demands, time_slots, instance, waypoints):
     data = {"srpaths": []}
-    if not segments:
-        for id, demand in enumerate(demands):
-            for time in range(time_slots):
-                waypoints = []
-                output_data = {"d": id, "t": time, "w": waypoints}
-                data["srpaths"].append(output_data)
+    for id, demand in enumerate(demands):
+        for time in range(time_slots):
+            waypoint = []
+            if waypoints[id][time] != None:
+                w = waypoints[id][time]
+                waypoint.append(w)
+            output_data = {"d": id, "t": time, "w": waypoint}
+            data["srpaths"].append(output_data)
 
     # Write to JSON file
     with open(f'setA/setA-{instance}-srpaths.json', 'w') as file:
