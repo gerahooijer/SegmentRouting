@@ -6,7 +6,7 @@ from forwarding_graphs import get_all_forwarding_graphs
 import time
 import random
 from generate_output_file import output_file
-from local_search import compute_mlu_from_percentages, local_search_precomputed_fg
+from local_search import compute_mlu_from_percentages, local_search_precomputed_fg, local_search_bottleneck
 from removed_links import remove_downed_links
 
 random.seed(2705)
@@ -55,10 +55,20 @@ if __name__ == '__main__':
         #Compute MLU for current demands and waypoints
         current_mlu, link_util = compute_mlu_from_percentages(e_flow_t0, demands, links, waypoints, timestep = 0)
 
+        before_bottleneck = current_mlu
+
         #Run local search, return waypoints and new MLU
+        waypoints, new_link_util, new_mlu = local_search_bottleneck(demands, waypoints, e_flow_t0, links, 
+                                                                    num_nodes, current_mlu, link_util, timestep=0)
+        
+        print("MLU before bottleneck LS:", before_bottleneck)
+        print("MLU after bottleneck LS:", new_mlu)
+
         waypoints, new_link_util, new_mlu = local_search_precomputed_fg(demands, waypoints, e_flow_t0,
-                                                links, num_nodes, current_mlu, link_util, timestep=0, 
+                                                links, num_nodes, new_mlu, new_link_util, timestep=0, 
                                                 time_limit=time_limit, start_time=start_time)
+        
+        print("MLU after full LS:", new_mlu)
 
         print("\nMLU before local search", current_mlu)
         print("MLU after local search", new_mlu)

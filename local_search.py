@@ -98,3 +98,52 @@ def local_search_precomputed_fg(demands, waypoints, edge_flow_all, links, num_no
                         print("\t new budget = ", budget)
 
     return waypoints, curr_link_util, current_mlu
+
+def local_search_bottleneck(demands, waypoints, edge_flow_all, links, num_nodes, 
+                             current_mlu, link_util, timestep):
+    improved = True
+    while improved:
+        improved = False
+        
+        # Find bottleneck link
+        bottleneck_link = max(link_util, key=link_util.get)
+        
+        # Find all demands flowing through bottleneck
+        bottleneck_demands = []
+        for demand_id, demand in enumerate(demands):
+            w = waypoints[demand_id][timestep]
+            flow = calculate_flow(demand, w, timestep, edge_flow_all, links, defaultdict(float))
+            if bottleneck_link in flow and flow[bottleneck_link] > 0:
+                bottleneck_demands.append(demand_id)
+        
+        # Evaluate each bottleneck demand independently against original link_util
+        best_changes = {}
+        for demand_id in bottleneck_demands:
+            demand = demands[demand_id]
+            current_w = waypoints[demand_id][timestep]
+            candidates = [None] + [n for n in range(num_nodes) if n != current_w]
+            for new_w in candidates:
+                new_mlu, _ = update_mlu_percentages(edge_flow_all, demand,
+                                 current_w, new_w, links, timestep, link_util)
+                if new_mlu < current_mlu:
+                    best_changes[demand_id] = new_w
+                    break
+        
+        # Apply all changes at once
+        if best_changes:
+            temp_waypoints = [list(w) for w in waypoints]
+            for demand_id, new_w in best_changes.items():
+                temp_waypoints[demand_id][timestep] = new_w
+            
+            # Measure combined effect
+            temp_mlu, temp_util = compute_mlu_from_percentages(edge_flow_all, demands, links, temp_waypoints, timestep)
+            
+            if temp_mlu < current_mlu:
+                current_mlu = temp_mlu
+                waypoints = temp_waypoints
+                link_util = temp_util
+                improved = True
+
+        print(new_mlu)
+    
+    return waypoints, link_util, current_mlu
