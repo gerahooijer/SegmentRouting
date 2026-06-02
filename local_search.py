@@ -71,6 +71,11 @@ def local_search_precomputed_fg(demands, waypoints, edge_flow_all, links, num_no
             current_w = waypoints[demand_id][timestep]
             changing_cost = 0
 
+            # Only try changing demands that flow through heavily loaded links
+            flow = calculate_flow(demand, current_w, timestep, edge_flow_all, links, defaultdict(float))
+            if not any(curr_link_util.get(link_id, 0) > 0.5 for link_id in flow):
+                continue
+
             candidates = [None] + [n for n in range(num_nodes) if n != current_w]
             for new_w in candidates:
                 cost = 0
@@ -143,7 +148,5 @@ def local_search_bottleneck(demands, waypoints, edge_flow_all, links, num_nodes,
                 waypoints = temp_waypoints
                 link_util = temp_util
                 improved = True
-
-        print(new_mlu)
     
     return waypoints, link_util, current_mlu
