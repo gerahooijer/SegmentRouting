@@ -1,5 +1,6 @@
 from collections import defaultdict
 from read_input import get_link_id
+import time
 
 def calculate_flow(demand, waypoint, timestep, edge_flows, links, link_util):
     volume = demand['v'][timestep]
@@ -53,12 +54,15 @@ def calculate_changing_cost (s, t, old_w, new_w):
     return len(seg_1.symmetric_difference(seg_2))
 
 def local_search_precomputed_fg(demands, waypoints, edge_flow_all, links, num_nodes,
-                                 current_mlu, link_util, timestep, prev_waypoints=None, budget=None):
+                                 current_mlu, link_util, timestep, prev_waypoints=None, 
+                                 budget=None, time_limit=None, start_time=None):
     curr_link_util = (link_util).copy()
 
     #Run LS until no improvements found anymore
     improved = True
     while improved:
+        if time_limit and (time.time() - start_time) > time_limit:
+            break
         improved = False
         for demand_id, demand in enumerate(demands):
             s = demand['s']
