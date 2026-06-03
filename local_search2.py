@@ -1,6 +1,7 @@
 import random
 from collections import defaultdict
 from read_input import get_link_id
+from copy import deepcopy
 import time
 
 def calculate_flow(demand, waypoint, timestep, edge_flows, links, link_util):
@@ -60,8 +61,8 @@ def update_mlu_percentages_multiple_waypoints(edge_flows, demand, old_w, new_w, 
     volume = demand['v'][timestep]
     update_util = link_util.copy()
 
-    seg_old = set(segment_path(demand['s'], demand['t'], old_w))
-    seg_new = set(segment_path(demand['s'], demand['t'], new_w))
+    seg_old = set(segment_path(old_w))
+    seg_new = set(segment_path(new_w))
 
     old_segments = seg_old - seg_new
     new_segments = seg_new - seg_old
@@ -81,15 +82,15 @@ def update_mlu_percentages_multiple_waypoints(edge_flows, demand, old_w, new_w, 
     return max(update_util.values()), update_util
 
 
-def segment_path(s, t, waypoint):
+def segment_path(waypoint):
     segment = []
     for idx in range(len(waypoint)-1):
         segment.append((waypoint[idx], waypoint[idx+1]))
     return segment
 
-def calculate_changing_cost (s, t, old_w, new_w):
-    seg_1 = set(segment_path(s, t, old_w))
-    seg_2 = set(segment_path(s, t, new_w))
+def calculate_changing_cost (old_w, new_w):
+    seg_1 = set(segment_path(old_w))
+    seg_2 = set(segment_path(new_w))
     return len(seg_1.symmetric_difference(seg_2))
 
 def add_waypoint(current_mlu, demand, current_w, new_w, link_util,
@@ -228,8 +229,8 @@ def local_search_precomputed_fg(demands, waypoints, edge_flow_all, links, num_no
                 #If there is a budget, calculate the cost of changing the waypoints
                 if budget is not None and prev_waypoints is not None:
                     # Calculate cost
-                    cost = calculate_changing_cost(s, t, current_w, temp_w)
-                    if budget - cost < 0: #If it does not fit within the budget, skip
+                    cost = calculate_changing_cost(current_w, temp_w)
+                    if budget - cost <= 0: #If it does not fit within the budget, skip
                         continue
 
                 #Compute the mlu for the new waypoint
@@ -255,10 +256,12 @@ def local_search_precomputed_fg(demands, waypoints, edge_flow_all, links, num_no
 def local_search_precomputed_fg_multiple_moves(graph, demands, waypoints, edge_flow_all, links, num_nodes,
                                 current_mlu, link_util, timestep, prev_waypoints=None, budget=None):
     curr_link_util = link_util.copy()
+    og_waypoints = deepcopy(waypoints)
 
     # Run LS until no improvements found anymore
     improved = True
     iterations = 0
+
     while improved:
         improved = False
         iterations += 1
@@ -305,8 +308,11 @@ def local_search_precomputed_fg_multiple_moves(graph, demands, waypoints, edge_f
                 if candidate_mlu < best_mlu_for_demand:
                     # Check budget if applicable
                     if budget is not None and prev_waypoints is not None:
-                        cost = calculate_changing_cost(s, t, current_w, candidate_w)
-                        if budget - cost < 0:
+                        cost = 0
+                        if og_waypoints[demand_id][timestep] != current_w:
+                            cost -= calculate_changing_cost(og_waypoints[demand_id][timestep], current_w)
+                        cost += calculate_changing_cost(current_w, candidate_w)
+                        if budget - cost <= 0:
                             continue
                     best_mlu_for_demand = candidate_mlu
                     best_w_for_demand = candidate_w
@@ -315,6 +321,7 @@ def local_search_precomputed_fg_multiple_moves(graph, demands, waypoints, edge_f
                 pending_moves[demand_id] = best_w_for_demand
 
         if not pending_moves:
+            #print("no pending moves")
             continue  # no improving moves found for any demand this iteration
 
         # Save old waypoints before touching anything — needed for correct rollback
@@ -323,27 +330,36 @@ def local_search_precomputed_fg_multiple_moves(graph, demands, waypoints, edge_f
         # --- Phase 2: apply all pending moves simultaneously ---
         for demand_id, updated_w in pending_moves.items():
             waypoints[demand_id][timestep] = updated_w
-
         # Recompute MLU from scratch over the combined new state
         new_mlu, new_util = compute_mlu_from_percentages(edge_flow_all, demands, links, waypoints, timestep)
 
         if new_mlu < current_mlu:
-            current_mlu = new_mlu
-            curr_link_util = new_util
-            improved = True
+            #Check the budget
             if budget is not None and prev_waypoints is not None:
-                total_cost = sum(
-                    calculate_changing_cost(demands[d]['s'], demands[d]['t'], old_waypoints[d], pending_moves[d])
-                    for d in pending_moves
-                )
+                total_cost = 0
+                #print("\nmoves", pending_moves)
+                for d in pending_moves:
+                    total_cost -= calculate_changing_cost(og_waypoints[d][timestep], old_waypoints[d])
+                        #print("cost", -calculate_changing_cost(og_waypoints[d][timestep], old_waypoints[d]))
+                    total_cost += calculate_changing_cost(og_waypoints[d][timestep], pending_moves[d])
+                    #print("change from", og_waypoints[d][timestep], "to", pending_moves[d], "new cost", calculate_changing_cost(og_waypoints[d][timestep], pending_moves[d]))
+                    #print("new total cost", total_cost)
+
+                if budget - total_cost <= 0:
+                    for demand_id in pending_moves:
+                        waypoints[demand_id][timestep] = old_waypoints[demand_id]
+                    continue
                 budget -= total_cost
-                print(f"  iteration {iterations}: applied {len(pending_moves)} simultaneous moves, "
-                      f"new MLU={round(current_mlu, 4)}, budget left={budget}")
-            else:
-                print(f"  iteration {iterations}: applied {len(pending_moves)} simultaneous moves, "
-                      f"new MLU={round(current_mlu, 4)}")
+                #print("budget left", budget)
+                #print("we updated the complete set \n")
+                current_mlu = new_mlu
+                curr_link_util = new_util
+                improved = True
+
+
+        # Combined result is not better — roll back all moves using saved old waypoints
         else:
-            # Combined result is not better — roll back all moves using saved old waypoints
+            #print("we check for single changes")
             for demand_id in pending_moves:
                 waypoints[demand_id][timestep] = old_waypoints[demand_id]
 
@@ -354,10 +370,8 @@ def local_search_precomputed_fg_multiple_moves(graph, demands, waypoints, edge_f
             best_single_util = None
 
             for demand_id, updated_w in pending_moves.items():
-                waypoints[demand_id][timestep] = updated_w  # apply just this one
-                single_mlu, single_util = compute_mlu_from_percentages(
-                    edge_flow_all, demands, links, waypoints, timestep)
-                waypoints[demand_id][timestep] = old_waypoints[demand_id]  # restore
+                single_mlu, single_util = update_mlu_percentages_multiple_waypoints(edge_flow_all, demands[demand_id], waypoints[demand_id][timestep],
+                                                          updated_w, links, timestep, curr_link_util)
 
                 if single_mlu < best_single_mlu:
                     best_single_mlu = single_mlu
@@ -365,17 +379,32 @@ def local_search_precomputed_fg_multiple_moves(graph, demands, waypoints, edge_f
                     best_single_w = updated_w
                     best_single_util = single_util
 
-            # Roll back all moves first
-            for demand_id in pending_moves:
-                waypoints[demand_id][timestep] = waypoints[demand_id][timestep]  # already old (restored above)
-
             if best_single_id is not None:
+                # Check budget if applicable
+                if budget is not None and prev_waypoints is not None:
+                    cost =- calculate_changing_cost(og_waypoints[best_single_id][timestep], waypoints[best_single_id][timestep])
+                    cost += calculate_changing_cost(waypoints[best_single_id][timestep], best_single_w)
+                    if budget - cost <= 0:
+                        continue
+                    budget -= cost
+                    #print("budget left", budget)
+
                 waypoints[best_single_id][timestep] = best_single_w
                 current_mlu = best_single_mlu
                 curr_link_util = best_single_util
                 improved = True
-                print(f"  iteration {iterations}: simultaneous moves conflicted; "
-                      f"applied best single move (demand {best_single_id}), "
-                      f"new MLU={round(current_mlu, 4)}")
+                #print(f"  iteration {iterations}: simultaneous moves conflicted; " f"applied best single move (demand {best_single_id}), "
+                      #f"new MLU={round(current_mlu, 4)}")
+            #else:
+                #print("no improvement")
+                #print(og_waypoints)
+                #print(waypoints)
+    total = 0
+    if timestep == 1:
+        for demand_id, demands in enumerate(demands):
+            if waypoints[demand_id][0] != waypoints[demand_id][1]:
+                total += calculate_changing_cost(waypoints[demand_id][0], waypoints[demand_id][1])
+                #print("demand", demand_id, "from ", waypoints[demand_id], "cost:", calculate_changing_cost(waypoints[demand_id][0], waypoints[demand_id][1]))
+        print("total cost", total)
 
-    return waypoints, curr_link_util, current_mlu
+    return waypoints, curr_link_util, current_mlu, budget
