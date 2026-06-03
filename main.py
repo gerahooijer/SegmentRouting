@@ -8,14 +8,14 @@ from forwarding_graphs import get_all_forwarding_graphs
 import time
 import random
 from generate_output_file import output_file
-from local_search import compute_mlu_from_percentages, local_search_precomputed_fg, local_search_precomputed_fg_multiple_moves
+from local_search import compute_mlu_from_percentages, local_search_precomputed_fg, local_search_precomputed_fg_multiple_moves, get_excluded_nodes
 from removed_links import remove_downed_links
 
 random.seed(2705)
 
 if __name__ == '__main__':
     #Read in the instance, and generate the adjacency list
-    instance = ('01')
+    instance = ('14')
     input_graph, scenario, traffic_matrix = read_input(instance)
     graph, links = generate_adjacency_lists(input_graph)
     num_time_slots, demands = traffic_matrix
@@ -37,30 +37,25 @@ if __name__ == '__main__':
 
     for restart in range(200):
 
-        """Pick random waypoints"""
-        waypoints = [[[demand['s']]] * num_time_slots for demand in demands]
+        waypoints = [[[demand['s']] + [demand['t']]] * num_time_slots for demand in demands]
+        exclusion_layer = 0
+
         for demand_id, demand in enumerate(demands):
             s = demand['s']
             t = demand['t']
 
-            #Candidates for waypoint are all nodes on the FG and all nodes adjacent to nodes on the FG
-            #print(nodes_in_fg_0[(s,t)])
-            adjacent = set()
-            for node in nodes_in_fg_0[(s,t)]:
-                adjacent.update(graph[node].keys())
-                #print(graph[node].keys())
-            candidates = [n for n in adjacent if n != s and n!= t]
-            #print("for ", s, "and", t, "cand", candidates)
+            fg_nodes = set(nodes_in_fg_0[(s, t)])
+            excluded = get_excluded_nodes(fg_nodes, graph, exclusion_layer)
+            candidates = [n for n in range(num_nodes) if n not in excluded and n != s and n != t]
 
-            used = set()
-            number_waypoints = random.randint(0, max_segments - 2)
-            for _ in range(1):
-                if not candidates:
-                    break
+            if not candidates:
+                candidates = [n for n in range(num_nodes) if n not in fg_nodes and n != s and n != t]
+
+            if candidates:
                 w = random.choice(candidates)
-                used.add(w)
-                waypoints[demand_id][0].append(w)
-            waypoints[demand_id][0].append(t)
+                waypoints[demand_id][0] = [s, w, t]  # schoon pad: s → w → t
+            else:
+                waypoints[demand_id][0] = [s, t]  # geen waypoint mogelijk
 
         #Compute MLU for current demands and waypoints
         current_mlu, link_util = compute_mlu_from_percentages(e_flow_t0, demands, links, waypoints, timestep = 0)
@@ -68,7 +63,7 @@ if __name__ == '__main__':
         start_time_ls = time.time()
         #Run local search, return waypoints and new MLU
         waypoints, new_link_util, new_mlu = local_search_precomputed_fg_multiple_moves(graph, demands, waypoints, e_flow_t0,
-                                                links, num_nodes, current_mlu, link_util, timestep=0)
+                                                links, num_nodes, current_mlu, link_util, timestep=0, exclusion_layer=1)
 
         end_time_ls = time.time()
         #print("time spent in LS:", round(end_time_ls - start_time_ls, 5), "seconds")
@@ -97,7 +92,7 @@ if __name__ == '__main__':
 
     waypoints, new_link_util_t1, new_mlu_1 = local_search_precomputed_fg_multiple_moves(graph, demands, waypoints_t1, e_flow_t1,
                                                 links, num_nodes, current_mlu_1, link_util_1,
-                                                timestep=1, prev_waypoints=best_waypoints, budget=budget_t1)
+                                                timestep=1, prev_waypoints=best_waypoints, budget=budget_t1, exclusion_layer=0)
     end_time = time.time()
     print(waypoints)
     """"Calculate the flow over each edge, for every timestep"""

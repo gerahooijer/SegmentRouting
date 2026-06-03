@@ -160,7 +160,7 @@ def switch_waypoint(current_mlu, demand, current_w, new_w, link_util, timestep, 
             best_mlu = new_mlu
             best_w = temp_w.copy()
             best_util = updated_link_util
-            #print("succesfull switch")
+            #print("successful switch")
 
     return best_w, best_mlu, best_util
 
@@ -251,9 +251,28 @@ def local_search_precomputed_fg(demands, waypoints, edge_flow_all, links, num_no
 
     return waypoints, curr_link_util, current_mlu
 
+def get_excluded_nodes(fg_nodes, graph, exclusion_layer):
+    # Returns nodes that are within exlusion_layer steps of the forwarding graph.
+    # Exclusion layer = 0: only fg nodes excluded
+    # Exclusion layer = 1: fg nodes & direct neighbours excluded
+    # Exclusion layer = 2: fg nodes & direct neighbours & direct neighbours of direct neighbours excluded
+
+    excluded = set(fg_nodes)
+    frontier = set(fg_nodes)
+
+    for _ in range(exclusion_layer):
+        next_frontier = set()
+        for node in frontier:
+            for neighbour in graph[node].keys():
+                if neighbour not in excluded:
+                    next_frontier.add(neighbour)
+        excluded |= next_frontier
+        frontier = next_frontier
+
+    return excluded
 
 def local_search_precomputed_fg_multiple_moves(graph, demands, waypoints, edge_flow_all, links, num_nodes,
-                                current_mlu, link_util, timestep, prev_waypoints=None, budget=None):
+                                current_mlu, link_util, timestep, prev_waypoints=None, budget=None, exclusion_layer=1):
     curr_link_util = (link_util).copy()
     start_time = time.time()
     end_time = time.time()
@@ -284,16 +303,11 @@ def local_search_precomputed_fg_multiple_moves(graph, demands, waypoints, edge_f
             #candidates = [n for n in range(num_nodes) if n not in current_w]
             #new_w = random.choice(candidates)
 
-            adjacent = set(graph[max_link.end].keys())
-            adjacent.update(graph[max_link.start].keys())
-            #print("\nfor link", max_link)
-            #print("adjacent to start", graph[max_link.start].keys())
-            #print("adjacent to end", graph[max_link.end].keys())
-            candidates = [n for n in adjacent if n not in current_w]
-            if len(candidates) <= 1:
-                adjacent = set(graph[candidates[0]].keys())
-                candidates = [n for n in adjacent if n not in current_w]
-
+            bottleneck_nodes = {max_link.start, max_link.end}
+            excluded = get_excluded_nodes(bottleneck_nodes, graph, exclusion_layer)
+            candidates = [n for n in range(num_nodes) if n not in excluded and n not in current_w and n != demand['s'] and n != demand['t']]
+            if not candidates:
+                candidates = [n for n in range(num_nodes) if n not in bottleneck_nodes and n not in current_w and n != demand['s'] and n != demand['t']]
             """Randomly choose an action to perform on the waypoints
                 1. Add a waypoint
                 2. Remove a waypoint
