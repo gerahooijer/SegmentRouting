@@ -230,7 +230,7 @@ def local_search_precomputed_fg(demands, waypoints, edge_flow_all, links, num_no
                 if budget is not None and prev_waypoints is not None:
                     # Calculate cost
                     cost = calculate_changing_cost(current_w, temp_w)
-                    if budget - cost <= 0: #If it does not fit within the budget, skip
+                    if budget - cost < 0: #If it does not fit within the budget, skip
                         continue
 
                 #Compute the mlu for the new waypoint
@@ -312,7 +312,7 @@ def local_search_precomputed_fg_multiple_moves(graph, demands, waypoints, edge_f
                         if og_waypoints[demand_id][timestep] != current_w:
                             cost -= calculate_changing_cost(og_waypoints[demand_id][timestep], current_w)
                         cost += calculate_changing_cost(current_w, candidate_w)
-                        if budget - cost <= 0:
+                        if budget - cost < 0:
                             continue
                     best_mlu_for_demand = candidate_mlu
                     best_w_for_demand = candidate_w
@@ -332,30 +332,21 @@ def local_search_precomputed_fg_multiple_moves(graph, demands, waypoints, edge_f
             waypoints[demand_id][timestep] = updated_w
         # Recompute MLU from scratch over the combined new state
         new_mlu, new_util = compute_mlu_from_percentages(edge_flow_all, demands, links, waypoints, timestep)
-
         if new_mlu < current_mlu:
             #Check the budget
             if budget is not None and prev_waypoints is not None:
                 total_cost = 0
-                #print("\nmoves", pending_moves)
                 for d in pending_moves:
                     total_cost -= calculate_changing_cost(og_waypoints[d][timestep], old_waypoints[d])
-                        #print("cost", -calculate_changing_cost(og_waypoints[d][timestep], old_waypoints[d]))
                     total_cost += calculate_changing_cost(og_waypoints[d][timestep], pending_moves[d])
-                    #print("change from", og_waypoints[d][timestep], "to", pending_moves[d], "new cost", calculate_changing_cost(og_waypoints[d][timestep], pending_moves[d]))
-                    #print("new total cost", total_cost)
-
-                if budget - total_cost <= 0:
+                if budget - total_cost < 0:
                     for demand_id in pending_moves:
                         waypoints[demand_id][timestep] = old_waypoints[demand_id]
                     continue
                 budget -= total_cost
-                #print("budget left", budget)
-                #print("we updated the complete set \n")
                 current_mlu = new_mlu
                 curr_link_util = new_util
                 improved = True
-
 
         # Combined result is not better — roll back all moves using saved old waypoints
         else:
@@ -383,11 +374,10 @@ def local_search_precomputed_fg_multiple_moves(graph, demands, waypoints, edge_f
                 # Check budget if applicable
                 if budget is not None and prev_waypoints is not None:
                     cost =- calculate_changing_cost(og_waypoints[best_single_id][timestep], waypoints[best_single_id][timestep])
-                    cost += calculate_changing_cost(waypoints[best_single_id][timestep], best_single_w)
-                    if budget - cost <= 0:
+                    cost += calculate_changing_cost(og_waypoints[best_single_id][timestep], best_single_w)
+                    if budget - cost < 0:
                         continue
                     budget -= cost
-                    #print("budget left", budget)
 
                 waypoints[best_single_id][timestep] = best_single_w
                 current_mlu = best_single_mlu
@@ -401,10 +391,465 @@ def local_search_precomputed_fg_multiple_moves(graph, demands, waypoints, edge_f
                 #print(waypoints)
     total = 0
     if timestep == 1:
+        #print("\n \n final costs")
         for demand_id, demands in enumerate(demands):
             if waypoints[demand_id][0] != waypoints[demand_id][1]:
                 total += calculate_changing_cost(waypoints[demand_id][0], waypoints[demand_id][1])
                 #print("demand", demand_id, "from ", waypoints[demand_id], "cost:", calculate_changing_cost(waypoints[demand_id][0], waypoints[demand_id][1]))
-        print("total cost", total)
+        #print("total cost", total)
 
     return waypoints, curr_link_util, current_mlu, budget
+
+
+def perturbation(waypoints, demands, edge_flow_all, links, timestep, graph, num_nodes,
+                 perturbation_strength=3, current_mlu=None, curr_link_util=None):
+
+    perturbed_waypoints = deepcopy(waypoints)
+    #print("perturbation strength", perturbation_strength)
+    # Select random demands to perturb
+    num_demands = len(demands)
+    num_to_perturb = min(perturbation_strength, num_demands)
+    demands_to_perturb = random.sample(range(num_demands), num_to_perturb)
+
+    for demand_id in demands_to_perturb:
+        demand = demands[demand_id]
+        current_w = perturbed_waypoints[demand_id][timestep]
+
+        # Randomly choose perturbation type
+        p = random.random()
+
+        if p < 0.33 and len(current_w) > 2:
+            # Remove a random waypoint (except source and destination)
+            if len(current_w) > 2:
+                idx_to_remove = random.randint(1, len(current_w) - 2)
+                current_w = current_w[:idx_to_remove] + current_w[idx_to_remove + 1:]
+
+        elif p < 0.66:
+            # Add a random waypoint at a random position
+            available = [n for n in range(num_nodes) if n not in current_w]
+            if available:
+                new_waypoint = random.choice(available)
+                insert_pos = random.randint(1, len(current_w) - 1)
+                current_w = current_w[:insert_pos] + [new_waypoint] + current_w[insert_pos:]
+
+        else:
+            # Switch a random waypoint with a random node
+            if len(current_w) > 2:
+                idx_to_switch = random.randint(1, len(current_w) - 2)
+                available = [n for n in range(num_nodes) if n not in current_w]
+                if available:
+                    new_node = random.choice(available)
+                    current_w[idx_to_switch] = new_node
+
+        perturbed_waypoints[demand_id][timestep] = current_w
+
+    # Compute MLU for perturbed solution
+    perturbed_mlu, perturbed_link_util = compute_mlu_from_percentages(
+        edge_flow_all, demands, links, perturbed_waypoints, timestep
+    )
+
+
+    return perturbed_waypoints, perturbed_mlu, perturbed_link_util
+
+
+def local_search_with_perturbation(graph, demands, waypoints, edge_flow_all, links, num_nodes,
+                                   current_mlu, link_util, timestep, prev_waypoints=None, budget=None,
+                                   max_no_improve_iterations=100, perturbation_strength=10):
+
+    curr_link_util = link_util.copy()
+    og_waypoints = deepcopy(waypoints)
+    og_mlu = current_mlu
+    improved = True
+    iterations = 0
+    no_improve_count = 0
+    best_mlu = current_mlu
+    best_waypoints = deepcopy(waypoints)
+    best_link_util = curr_link_util.copy()
+    best_budget = budget
+    start_time = time.time()
+    total_budget = budget
+    current_budget = budget
+    og_link_util = curr_link_util.copy()
+    improved_time = time.time()
+
+    while improved or no_improve_count < max_no_improve_iterations:
+        if time.time() - start_time > 30:
+            print("time spent in LS", (time.time() - start_time) )
+            break
+        improved = False
+        iterations += 1
+
+        # Try to find improving moves
+        max_link, max_util, demanding_ids = find_demands_using_max_link(
+            demands, curr_link_util, links, waypoints, timestep, edge_flow_all
+        )
+
+        pending_moves = {}
+        adjacent = set(graph[max_link.end].keys())
+        adjacent.update(graph[max_link.start].keys())
+
+        for demand_id in demanding_ids:
+            demand = demands[demand_id]
+            current_w = waypoints[demand_id][timestep]
+
+            candidates = [n for n in adjacent if n not in current_w]
+            if len(candidates) <= 1:
+                expanded = set()
+                for c in candidates:
+                    expanded.update(graph[c].keys())
+                candidates = [n for n in expanded if n not in current_w]
+
+            p = random.random()
+            best_w_for_demand = None
+            best_mlu_for_demand = current_mlu
+
+            for new_w in candidates:
+                if p < 0.33:
+                    candidate_w, candidate_mlu, _ = add_waypoint(
+                        current_mlu, demand, current_w, new_w, curr_link_util, timestep, edge_flow_all, links)
+                elif p < 0.66:
+                    candidate_w, candidate_mlu, _ = remove_waypoint(
+                        current_mlu, demand, current_w, curr_link_util, timestep, edge_flow_all, links)
+                else:
+                    candidate_w, candidate_mlu, _ = switch_waypoint(
+                        current_mlu, demand, current_w, new_w, curr_link_util, timestep, edge_flow_all, links)
+
+                if candidate_mlu < best_mlu_for_demand:
+                    if budget is not None and prev_waypoints is not None:
+                        cost = 0
+                        cost -= calculate_changing_cost(og_waypoints[demand_id][timestep], current_w)
+                        cost += calculate_changing_cost(og_waypoints[demand_id][timestep], candidate_w)
+                        if current_budget - cost < 0:
+                            continue
+                    best_mlu_for_demand = candidate_mlu
+                    best_w_for_demand = candidate_w
+
+            if best_w_for_demand is not None:
+                pending_moves[demand_id] = best_w_for_demand
+
+        old_waypoints = {d: waypoints[d][timestep].copy() for d in pending_moves}
+
+        for demand_id, updated_w in pending_moves.items():
+            waypoints[demand_id][timestep] = updated_w
+
+        new_mlu, new_util = compute_mlu_from_percentages(edge_flow_all, demands, links, waypoints, timestep)
+
+        if new_mlu < current_mlu:
+            if budget is not None and prev_waypoints is not None:
+                total_cost = 0
+                for d in pending_moves:
+                    total_cost -= calculate_changing_cost(og_waypoints[d][timestep], old_waypoints[d])
+                    total_cost += calculate_changing_cost(og_waypoints[d][timestep], pending_moves[d])
+
+                if current_budget - total_cost < 0:
+                    for demand_id in pending_moves:
+                        waypoints[demand_id][timestep] = old_waypoints[demand_id]
+                    continue
+                current_budget -= total_cost
+
+            current_mlu = new_mlu
+            curr_link_util = new_util
+            improved = True
+            no_improve_count = 0
+
+            # Track best solution found
+            if current_mlu < best_mlu:
+                best_mlu = current_mlu
+                best_budget = current_budget
+                best_waypoints = deepcopy(waypoints)
+                best_link_util = curr_link_util.copy()
+                improved = True
+                improved_time = time.time()
+                #print("new best", best_mlu, "after", round((time.time()-start_time), 2))
+                #print("budget", best_budget)
+
+        else:
+            for demand_id in pending_moves:
+                waypoints[demand_id][timestep] = old_waypoints[demand_id]
+
+            best_single_mlu = current_mlu
+            best_single_id = None
+            best_single_w = None
+            best_single_util = None
+
+            for demand_id, updated_w in pending_moves.items():
+                single_mlu, single_util = update_mlu_percentages_multiple_waypoints(
+                    edge_flow_all, demands[demand_id], waypoints[demand_id][timestep],
+                    updated_w, links, timestep, curr_link_util
+                )
+
+                if single_mlu < best_single_mlu:
+                    best_single_mlu = single_mlu
+                    best_single_id = demand_id
+                    best_single_w = updated_w
+                    best_single_util = single_util
+
+            if best_single_id is not None:
+                if budget is not None and prev_waypoints is not None:
+                    cost = -calculate_changing_cost(og_waypoints[best_single_id][timestep],
+                                                    waypoints[best_single_id][timestep])
+                    cost += calculate_changing_cost(og_waypoints[best_single_id][timestep], best_single_w)
+                    if current_budget - cost < 0:
+                        no_improve_count += 1
+                        continue
+                    current_budget -= cost
+
+                waypoints[best_single_id][timestep] = best_single_w
+                current_mlu = best_single_mlu
+                curr_link_util = best_single_util
+                improved = True
+                no_improve_count = 0
+
+                # Track best solution found
+                if current_mlu < best_mlu:
+                    best_mlu = current_mlu
+                    best_budget = current_budget
+                    best_waypoints = deepcopy(waypoints)
+                    best_link_util = curr_link_util.copy()
+                    improved = True
+                    improved_time = time.time()
+                    #print("new best", best_mlu, "after", round((time.time() - start_time), 2))
+
+                    #print("new best", best_mlu)
+                    #print("best budget", best_budget)
+            else:
+                no_improve_count += 1
+                if no_improve_count >= max_no_improve_iterations:
+                    # print(f"No improvement for {no_improve_count} iterations. Applying perturbation...")
+                    # Apply perturbation
+                    perturbation_strength = int(total_budget * 0.4)
+                    updated_waypoints, updated_mlu, updated_link_util = perturbation(
+                        og_waypoints, demands, edge_flow_all, links, timestep, graph, num_nodes,
+                        perturbation_strength=perturbation_strength,
+                        current_mlu=og_mlu, curr_link_util=og_link_util)
+                    #print("perturbation")
+                    if total_budget != None:
+                        cost = 0
+                        for demand_id, demand in enumerate(demands):
+                            if updated_waypoints[demand_id][0] != updated_waypoints[demand_id][1]:
+                                cost += calculate_changing_cost(og_waypoints[demand_id][0],
+                                                                updated_waypoints[demand_id][1])
+                                # print("for demand", demand_id, "cost", cost, "wp", updated_waypoints[demand_id])
+                        if total_budget - cost < 0:
+                            # print("perturbation not within budget")
+                            # print("total budget is")
+                            continue
+                        current_budget = total_budget - cost
+                    waypoints = updated_waypoints
+                    current_mlu = updated_mlu
+                    curr_link_util = updated_link_util
+                    no_improve_count = 0
+                continue
+
+    total = 0
+    if timestep == 1:
+        # print("\n \n final costs")
+        for demand_id, demands in enumerate(demands):
+            if waypoints[demand_id][0] != waypoints[demand_id][1]:
+                total += calculate_changing_cost(waypoints[demand_id][0], waypoints[demand_id][1])
+                # print("demand", demand_id, "from ", waypoints[demand_id], "cost:", calculate_changing_cost(waypoints[demand_id][0], waypoints[demand_id][1]))
+        #print("total cost", total)
+
+    #print(iterations)
+    return best_waypoints, best_link_util, best_mlu, best_budget
+
+def local_search_with_perturbation2(graph, demands, waypoints, edge_flow_all, links, num_nodes,
+                                   current_mlu, link_util, timestep, prev_waypoints=None, budget=None,
+                                   max_no_improve_iterations=100, perturbation_strength=10):
+    curr_link_util = link_util.copy()
+    og_waypoints = deepcopy(waypoints)
+    og_mlu = current_mlu
+    improved = True
+    iterations = 0
+    no_improve_count = 0
+    best_mlu = current_mlu
+    best_waypoints = deepcopy(waypoints)
+    best_link_util = curr_link_util.copy()
+    best_budget = budget
+    start_time = time.time()
+    total_budget = budget
+    current_budget = budget
+    og_link_util = curr_link_util.copy()
+    improved_time = time.time()
+
+    while improved or no_improve_count < max_no_improve_iterations:
+        if time.time() - start_time > 30:
+            print("time spent in LS", (time.time() - start_time) )
+            break
+        improved = False
+        iterations += 1
+
+        # Try to find improving moves
+        max_link, max_util, demanding_ids = find_demands_using_max_link(
+            demands, curr_link_util, links, waypoints, timestep, edge_flow_all
+        )
+
+        pending_moves = {}
+        adjacent = set(graph[max_link.end].keys())
+        adjacent.update(graph[max_link.start].keys())
+
+        for demand_id in demanding_ids:
+            demand = demands[demand_id]
+            current_w = waypoints[demand_id][timestep]
+
+            candidates = [n for n in adjacent if n not in current_w]
+            if len(candidates) <= 1:
+                expanded = set()
+                for c in candidates:
+                    expanded.update(graph[c].keys())
+                candidates = [n for n in expanded if n not in current_w]
+
+            p = random.random()
+            best_w_for_demand = None
+            best_mlu_for_demand = current_mlu
+
+            for new_w in candidates:
+                if p < 0.33:
+                    candidate_w, candidate_mlu, _ = add_waypoint(
+                        current_mlu, demand, current_w, new_w, curr_link_util, timestep, edge_flow_all, links)
+                elif p < 0.66:
+                    candidate_w, candidate_mlu, _ = remove_waypoint(
+                        current_mlu, demand, current_w, curr_link_util, timestep, edge_flow_all, links)
+                else:
+                    candidate_w, candidate_mlu, _ = switch_waypoint(
+                        current_mlu, demand, current_w, new_w, curr_link_util, timestep, edge_flow_all, links)
+
+                if candidate_mlu < best_mlu_for_demand:
+                    if budget is not None and prev_waypoints is not None:
+                        cost = 0
+                        cost -= calculate_changing_cost(og_waypoints[demand_id][timestep], current_w)
+                        cost += calculate_changing_cost(og_waypoints[demand_id][timestep], candidate_w)
+                        if current_budget - cost < 0:
+                            continue
+                    best_mlu_for_demand = candidate_mlu
+                    best_w_for_demand = candidate_w
+
+            if best_w_for_demand is not None:
+                pending_moves[demand_id] = best_w_for_demand
+
+        old_waypoints = {d: waypoints[d][timestep].copy() for d in pending_moves}
+
+        for demand_id, updated_w in pending_moves.items():
+            waypoints[demand_id][timestep] = updated_w
+
+        new_mlu, new_util = compute_mlu_from_percentages(edge_flow_all, demands, links, waypoints, timestep)
+
+        if new_mlu < current_mlu:
+            if budget is not None and prev_waypoints is not None:
+                total_cost = 0
+                for d in pending_moves:
+                    total_cost -= calculate_changing_cost(og_waypoints[d][timestep], old_waypoints[d])
+                    total_cost += calculate_changing_cost(og_waypoints[d][timestep], pending_moves[d])
+
+                if current_budget - total_cost < 0:
+                    for demand_id in pending_moves:
+                        waypoints[demand_id][timestep] = old_waypoints[demand_id]
+                    continue
+                current_budget -= total_cost
+
+            current_mlu = new_mlu
+            curr_link_util = new_util
+            improved = True
+            no_improve_count = 0
+
+            # Track best solution found
+            if current_mlu < best_mlu:
+                best_mlu = current_mlu
+                best_budget = current_budget
+                best_waypoints = deepcopy(waypoints)
+                best_link_util = curr_link_util.copy()
+                improved = True
+                improved_time = time.time()
+                #print("new best", best_mlu, "found after", (round((time.time() - start_time), 2)))
+                #print("budget", best_budget)
+
+        else:
+            for demand_id in pending_moves:
+                waypoints[demand_id][timestep] = old_waypoints[demand_id]
+
+            best_single_mlu = current_mlu
+            best_single_id = None
+            best_single_w = None
+            best_single_util = None
+
+            for demand_id, updated_w in pending_moves.items():
+                single_mlu, single_util = update_mlu_percentages_multiple_waypoints(
+                    edge_flow_all, demands[demand_id], waypoints[demand_id][timestep],
+                    updated_w, links, timestep, curr_link_util
+                )
+
+                if single_mlu < best_single_mlu:
+                    best_single_mlu = single_mlu
+                    best_single_id = demand_id
+                    best_single_w = updated_w
+                    best_single_util = single_util
+
+            if best_single_id is not None:
+                if budget is not None and prev_waypoints is not None:
+                    cost = -calculate_changing_cost(og_waypoints[best_single_id][timestep],
+                                                    waypoints[best_single_id][timestep])
+                    cost += calculate_changing_cost(og_waypoints[best_single_id][timestep], best_single_w)
+                    if current_budget - cost < 0:
+                        no_improve_count += 1
+                        continue
+                    current_budget -= cost
+
+                waypoints[best_single_id][timestep] = best_single_w
+                current_mlu = best_single_mlu
+                curr_link_util = best_single_util
+                improved = True
+                no_improve_count = 0
+
+                # Track best solution found
+                if current_mlu < best_mlu:
+                    best_mlu = current_mlu
+                    best_budget = current_budget
+                    best_waypoints = deepcopy(waypoints)
+                    best_link_util = curr_link_util.copy()
+                    improved = True
+                    improved_time = time.time()
+
+                    #print("new best", best_mlu, "found after", (round((time.time() - start_time), 2)))
+                    #print("new best", best_mlu)
+                    #print("best budget", best_budget)
+            else:
+                no_improve_count += 1
+                if no_improve_count >= max_no_improve_iterations:
+                    # print(f"No improvement for {no_improve_count} iterations. Applying perturbation...")
+                    # Apply perturbation
+                    perturbation_strength = int(len(demands) * 0.4)
+                    # print("perturbation strength", perturbation_strength)
+                    updated_waypoints, updated_mlu, updated_link_util = perturbation(
+                        og_waypoints, demands, edge_flow_all, links, timestep, graph, num_nodes,
+                        perturbation_strength=perturbation_strength,
+                        current_mlu=og_mlu, curr_link_util=og_link_util)
+                    #print("perturb after", round((time.time() - start_time), 2), "seconds")
+                    if total_budget != None:
+                        cost = 0
+                        for demand_id, demand in enumerate(demands):
+                            if updated_waypoints[demand_id][0] != updated_waypoints[demand_id][1]:
+                                cost += calculate_changing_cost(og_waypoints[demand_id][0],
+                                                                updated_waypoints[demand_id][1])
+                                #print("for demand", demand_id, "cost", cost, "wp", updated_waypoints[demand_id])
+                        if total_budget - cost < 0:
+                            #print("perturbation not within budget")
+                            #print("total budget is")
+                            continue
+                        current_budget = total_budget - cost
+                    waypoints = updated_waypoints
+                    current_mlu = updated_mlu
+                    curr_link_util = updated_link_util
+                    no_improve_count = 0
+                continue
+
+    total = 0
+    if timestep == 1:
+        # print("\n \n final costs")
+        for demand_id, demands in enumerate(demands):
+            if waypoints[demand_id][0] != waypoints[demand_id][1]:
+                total += calculate_changing_cost(waypoints[demand_id][0], waypoints[demand_id][1])
+                # print("demand", demand_id, "from ", waypoints[demand_id], "cost:", calculate_changing_cost(waypoints[demand_id][0], waypoints[demand_id][1]))
+        #print("total cost", total)
+
+    #print(iterations)
+    return best_waypoints, best_link_util, best_mlu, best_budget

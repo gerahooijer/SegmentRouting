@@ -7,13 +7,15 @@ from forwarding_graphs import get_all_forwarding_graphs
 import time
 import random
 from generate_output_file import output_file
-from local_search2 import compute_mlu_from_percentages, local_search_precomputed_fg, local_search_precomputed_fg_multiple_moves
+from local_search2 import (compute_mlu_from_percentages, local_search_precomputed_fg,
+                           local_search_precomputed_fg_multiple_moves, local_search_with_perturbation, local_search_with_perturbation2)
 from removed_links import remove_downed_links
 
 random.seed(2705)
 
 if __name__ == '__main__':
-    instances = ('01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19','20')
+    #instances = ('01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19','20')
+    instances = ['01']
     #Read in the instance, and generate the adjacency list
     for instance in instances:
     #instance = '01'
@@ -36,7 +38,7 @@ if __name__ == '__main__':
         best_mlu_0 = float('inf')
         num_nodes = len(graph)
 
-        for restart in range(200):
+        for restart in range(1):
 
             """Pick random waypoints"""
             waypoints = [[[demand['s']]] * num_time_slots for demand in demands]
@@ -66,7 +68,7 @@ if __name__ == '__main__':
             start_time_ls = time.time()
 
             #Run local search, return waypoints and new MLU
-            waypoints, new_link_util, new_mlu, budget_spent = local_search_precomputed_fg_multiple_moves(graph, demands, waypoints, e_flow_t0,
+            waypoints, new_link_util, new_mlu, budget_spent = local_search_with_perturbation2(graph, demands, waypoints, e_flow_t0,
                                                     links, num_nodes, current_mlu, link_util, timestep=0)
 
             end_time_ls = time.time()
@@ -75,7 +77,7 @@ if __name__ == '__main__':
                 best_mlu_0 = new_mlu
                 best_waypoints = [list(w) for w in waypoints]
                 best_util = new_link_util
-                print("Restart", restart + 1, ": new best MLU = ", best_mlu_0)
+                #print("Restart", restart + 1, ": new best MLU = ", best_mlu_0)
 
         """Timestep 1 starting from best t=0 solution"""
         waypoints_t1 = [[None] * num_time_slots for _ in range(len(demands))]
@@ -90,11 +92,11 @@ if __name__ == '__main__':
         # Compute MLU for current demands and waypoints
         current_mlu_1, link_util_1 = compute_mlu_from_percentages(e_flow_t1, demands, links, waypoints_t1, timestep=1)
 
-        waypoints, new_link_util_t1, new_mlu_1, budget_spent = local_search_precomputed_fg_multiple_moves(graph_t1, demands, waypoints_t1, e_flow_t1,
+        waypoints, new_link_util_t1, new_mlu_1, budget_spent = local_search_with_perturbation(graph_t1, demands, waypoints_t1, e_flow_t1,
                                                    links, num_nodes, current_mlu_1, link_util_1,
                                                    timestep=1, prev_waypoints=best_waypoints, budget=budget_t1)
         end_time = time.time()
-        print(waypoints)
+        #print(waypoints)
 
         """"Calculate the flow over each edge, for every timestep"""
         link_load =[[0 for _ in enumerate(links)]for _ in range(num_time_slots)]
@@ -104,7 +106,7 @@ if __name__ == '__main__':
         print("\nfor instance", instance)
         print("MLU", round(best_mlu_0, 4))
         #print("for timestep 1", new_link_util_t1)
-        print("MLU", round(new_mlu_1, 4))
+        print("MLU from ", round(new_mlu_1, 4))
         print("cost is ", (budget_t1 - budget_spent), "of total budget", budget_t1)
 
         output_file(demands, num_time_slots, instance, waypoints)
